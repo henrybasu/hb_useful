@@ -44,6 +44,7 @@ export default defineConfig({
         weather: resolve(root, "weather.html"),
         stocks: resolve(root, "stocks.html"),
         news: resolve(root, "news.html"),
+        about: resolve(root, "about.html"),
         ...stockPageInputs(),
       },
     },

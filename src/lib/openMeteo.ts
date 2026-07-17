@@ -163,7 +163,7 @@ export async function getForecast(
   url.searchParams.set("timezone", "auto");
   url.searchParams.set("forecast_days", "7");
 
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
   if (!res.ok) {
     throw new Error(`Forecast failed (${res.status})`);
   }

@@ -114,29 +114,29 @@ function newsMini(result: MiniResult<HeadlinesSnapshot>): string {
   return `<div class="mini-headline-list">${items}</div>`;
 }
 
-function render(
-  weather: MiniResult<ForecastBundle>,
-  stocks: MiniResult<StockQuote[]>,
-  news: MiniResult<HeadlinesSnapshot>,
-): void {
+function panelShell(id: string, label: string, href: string, body: string): string {
+  return `
+    <a class="dash-tile ${id}-tile" href="${href}">
+      <span class="tile-label">${label}</span>
+      <div class="tile-body" data-panel="${id}">${body}</div>
+    </a>`;
+}
+
+function renderShell(): void {
   app.innerHTML = `
     ${renderSiteNav("dashboard")}
     <main class="dash">
       <section class="dash-grid" aria-label="Dashboard panels">
-        <a class="dash-tile weather-tile" href="./weather.html">
-          <span class="tile-label">Weather</span>
-          <div class="tile-body">${weatherMini(weather)}</div>
-        </a>
-        <a class="dash-tile stocks-tile" href="./stocks.html">
-          <span class="tile-label">Stocks</span>
-          <div class="tile-body">${stocksMini(stocks)}</div>
-        </a>
-        <a class="dash-tile news-tile" href="./news.html">
-          <span class="tile-label">News</span>
-          <div class="tile-body">${newsMini(news)}</div>
-        </a>
+        ${panelShell("weather", "Weather", "./weather.html", `<p class="dash-loading">Loading…</p>`)}
+        ${panelShell("stocks", "Stocks", "./stocks.html", `<p class="dash-loading">Loading…</p>`)}
+        ${panelShell("news", "News", "./news.html", `<p class="dash-loading">Loading…</p>`)}
       </section>
     </main>`;
+}
+
+function setPanel(id: string, html: string): void {
+  const el = app.querySelector(`[data-panel="${id}"]`);
+  if (el) el.innerHTML = html;
 }
 
 async function wrap<T>(fn: () => Promise<T>): Promise<MiniResult<T>> {
@@ -151,19 +151,17 @@ async function wrap<T>(fn: () => Promise<T>): Promise<MiniResult<T>> {
 }
 
 async function load(): Promise<void> {
-  app.innerHTML = `
-    ${renderSiteNav("dashboard")}
-    <main class="dash">
-      <p class="dash-loading">Loading live panels…</p>
-    </main>`;
+  renderShell();
 
-  const [weather, stocks, news] = await Promise.all([
-    wrap(() => getForecast(SAN_JOSE.latitude, SAN_JOSE.longitude)),
-    wrap(() => getWatchlistQuotes()),
-    wrap(() => getTopHeadlines(24)),
-  ]);
-
-  render(weather, stocks, news);
+  void wrap(() => getForecast(SAN_JOSE.latitude, SAN_JOSE.longitude)).then(
+    (weather) => setPanel("weather", weatherMini(weather)),
+  );
+  void wrap(() => getWatchlistQuotes()).then((stocks) =>
+    setPanel("stocks", stocksMini(stocks)),
+  );
+  void wrap(() => getTopHeadlines(24)).then((news) =>
+    setPanel("news", newsMini(news)),
+  );
 }
 
 void load();

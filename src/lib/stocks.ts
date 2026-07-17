@@ -502,6 +502,14 @@ async function getYahooQuoteCached(item: WatchItem): Promise<StockQuote> {
 }
 
 export async function getYahooQuote(item: WatchItem): Promise<StockQuote> {
+  // Browsers on GitHub Pages cannot call Yahoo (CORS). Prefer the build-time cache.
+  if (!import.meta.env.DEV) {
+    try {
+      return await getYahooQuoteCached(item);
+    } catch {
+      return getYahooQuoteLive(item);
+    }
+  }
   try {
     return await getYahooQuoteLive(item);
   } catch {
@@ -620,14 +628,27 @@ export async function getWatchlistQuotes(
   items: readonly WatchItem[] = WATCHLIST,
 ): Promise<StockQuote[]> {
   const token = getFinnhubKey();
-  const needsFinnhub = items.some((i) => i.source === "finnhub");
-  if (needsFinnhub && !token) {
-    throw new Error("Missing VITE_FINNHUB_KEY — add it to .env");
+  // Without Finnhub, still show Yahoo-backed index quotes from the build snapshot.
+  const loadable = token
+    ? items
+    : items.filter((item) => item.source === "yahoo");
+  if (loadable.length === 0) {
+    throw new Error(
+      "Missing VITE_FINNHUB_KEY — add it to .env (and GitHub Actions secrets)",
+    );
   }
 
+  // Skip Yahoo history in production — CORS blocks it and it only powers sparklines.
   const [quoteResults, historyResults] = await Promise.all([
-    Promise.allSettled(items.map((item) => getQuote(item, token))),
-    Promise.allSettled(items.map((item) => getYahooHistory(item.symbol))),
+    Promise.allSettled(loadable.map((item) => getQuote(item, token))),
+    import.meta.env.DEV
+      ? Promise.allSettled(loadable.map((item) => getYahooHistory(item.symbol)))
+      : Promise.resolve(
+          loadable.map(
+            () =>
+              ({ status: "rejected", reason: "skip" }) as PromiseRejectedResult,
+          ),
+        ),
   ]);
 
   const quotes: StockQuote[] = [];
@@ -635,7 +656,7 @@ export async function getWatchlistQuotes(
 
   for (let i = 0; i < quoteResults.length; i++) {
     const result = quoteResults[i];
-    const item = items[i];
+    const item = loadable[i];
     if (result?.status === "fulfilled") {
       const hist = historyResults[i];
       const history = hist?.status === "fulfilled" ? hist.value : undefined;

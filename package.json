@@ -1,0 +1,20 @@
+{
+  "name": "hb-useful",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/fetch-index-quotes.mjs && node scripts/fetch-headlines.mjs && node scripts/generate-stock-pages.mjs",
+    "dev": "vite",
+    "prebuild": "node scripts/fetch-index-quotes.mjs && node scripts/fetch-headlines.mjs && node scripts/generate-stock-pages.mjs",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "fetch-indexes": "node scripts/fetch-index-quotes.mjs",
+    "fetch-headlines": "node scripts/fetch-headlines.mjs",
+    "generate-stock-pages": "node scripts/generate-stock-pages.mjs"
+  },
+  "devDependencies": {
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7"
+  }
+}

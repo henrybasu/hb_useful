@@ -1,0 +1,165 @@
+body {
+  background: #efe7d6;
+  color: #171411;
+}
+
+.paper {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 3rem;
+}
+
+.masthead {
+  text-align: center;
+  border-top: 4px solid #171411;
+  border-bottom: 2px solid #171411;
+  padding: 0.85rem 0 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.masthead-title {
+  margin: 0;
+  font-family: "Playfair Display", Georgia, serif;
+  font-weight: 900;
+  font-size: clamp(2.4rem, 8vw, 4.2rem);
+  letter-spacing: -0.02em;
+  line-height: 0.95;
+}
+
+.masthead-sub {
+  margin: 0.45rem 0 0;
+  font-family: "Libre Baskerville", Georgia, serif;
+  font-style: italic;
+  font-size: 0.95rem;
+}
+
+.masthead-sub .source-link {
+  color: inherit;
+  font-style: italic;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.masthead-sub .source-link:hover {
+  color: #4a3f35;
+}
+
+.dateline {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 0.65rem 0 0;
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-top: 1px solid #171411;
+  border-bottom: 1px solid #171411;
+  padding: 0.35rem 0;
+}
+
+.news-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 1.5rem 1.75rem;
+}
+
+.lead-story {
+  grid-column: 1 / -1;
+  padding-bottom: 1.25rem;
+  border-bottom: 2px solid #171411;
+}
+
+.lead-story h2 {
+  margin: 0 0 0.5rem;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  line-height: 1.15;
+}
+
+.lead-story h2 a {
+  text-decoration: none;
+}
+
+.lead-story h2 a:hover {
+  text-decoration: underline;
+}
+
+.story {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #b5aa96;
+}
+
+.story h3 {
+  margin: 0 0 0.4rem;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 1.2rem;
+  line-height: 1.2;
+}
+
+.story h3 a {
+  text-decoration: none;
+}
+
+.story h3 a:hover {
+  text-decoration: underline;
+}
+
+.story-meta {
+  margin: 0 0 0.4rem;
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #5a5246;
+}
+
+.story-deck {
+  margin: 0;
+  font-family: "Libre Baskerville", Georgia, serif;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: #2c271f;
+}
+
+html[data-theme="dark"] body {
+  background: #141210;
+  color: #ece4d6;
+}
+
+html[data-theme="dark"] .masthead {
+  border-top-color: #ece4d6;
+  border-bottom-color: #ece4d6;
+}
+
+html[data-theme="dark"] .masthead-sub .source-link:hover {
+  color: #c8b89a;
+}
+
+html[data-theme="dark"] .dateline {
+  border-top-color: #ece4d6;
+  border-bottom-color: #ece4d6;
+}
+
+html[data-theme="dark"] .lead-story {
+  border-bottom-color: #ece4d6;
+}
+
+html[data-theme="dark"] .story {
+  border-bottom-color: #4a4338;
+}
+
+html[data-theme="dark"] .story-meta {
+  color: #a89a86;
+}
+
+html[data-theme="dark"] .story-deck {
+  color: #d4cabc;
+}
+
+@media (max-width: 720px) {
+  .news-grid {
+    grid-template-columns: 1fr;
+  }
+}

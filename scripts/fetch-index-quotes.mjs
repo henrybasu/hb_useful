@@ -5,11 +5,15 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = resolve(ROOT, "public/index-quotes.json");
 
+// Yahoo symbols that browsers cannot fetch live on GitHub Pages (CORS).
+// Snapshotted at build time into public/index-quotes.json.
 const SYMBOLS = [
   { symbol: "^GSPC", label: "S&P 500" },
   { symbol: "^DJI", label: "DOW JONES" },
   { symbol: "^IXIC", label: "NASDAQ" },
   { symbol: "VTSAX", label: "VTSAX" },
+  { symbol: "005930.KS", label: "Samsung" },
+  { symbol: "000660.KS", label: "SK Hynix" },
 ];
 
 async function fetchYahoo(symbol, label) {

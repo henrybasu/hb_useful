@@ -169,6 +169,11 @@ const batches = [];
 if (!token) {
   errors.push("Missing GNEWS_KEY (or VITE_GNEWS_KEY) — add it to .env");
   console.error(errors[0]);
+  // In CI without secrets, keep the committed snapshot so the site can still build.
+  if (existsSync(OUT)) {
+    console.log(`keeping existing ${OUT} (no API key)`);
+    process.exit(0);
+  }
 } else {
   const perCategory = Math.min(10, Math.max(3, MAX));
   // Sequential with a short pause to stay under GNews free-tier burst limits.

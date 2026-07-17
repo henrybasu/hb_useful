@@ -575,6 +575,12 @@ export async function getChartSeries(
   return series;
 }
 
+const FINNHUB_GAP_MS = 120;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function getFinnhubQuote(
   item: WatchItem,
   token = getFinnhubKey(),
@@ -587,31 +593,41 @@ export async function getFinnhubQuote(
   url.searchParams.set("symbol", item.symbol);
   url.searchParams.set("token", token);
 
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Quote failed for ${item.label} (${res.status})`);
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(url);
+    lastStatus = res.status;
+    if (res.status === 429) {
+      await sleep(500 * (attempt + 1));
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`Quote failed for ${item.label} (${res.status})`);
+    }
+
+    const data = (await res.json()) as FinnhubQuoteResponse;
+    if (data.error) {
+      throw new Error(`${item.label}: ${data.error}`);
+    }
+    if (!data.c && data.c !== 0) {
+      throw new Error(`No quote data for ${item.label}`);
+    }
+
+    return {
+      symbol: item.symbol,
+      label: item.label,
+      price: data.c,
+      change: data.d ?? 0,
+      percentChange: data.dp ?? 0,
+      high: data.h,
+      low: data.l,
+      open: data.o,
+      previousClose: data.pc,
+      timestamp: data.t,
+    };
   }
 
-  const data = (await res.json()) as FinnhubQuoteResponse;
-  if (data.error) {
-    throw new Error(`${item.label}: ${data.error}`);
-  }
-  if (!data.c && data.c !== 0) {
-    throw new Error(`No quote data for ${item.label}`);
-  }
-
-  return {
-    symbol: item.symbol,
-    label: item.label,
-    price: data.c,
-    change: data.d ?? 0,
-    percentChange: data.dp ?? 0,
-    high: data.h,
-    low: data.l,
-    open: data.o,
-    previousClose: data.pc,
-    timestamp: data.t,
-  };
+  throw new Error(`Quote failed for ${item.label} (${lastStatus || 429})`);
 }
 
 export async function getQuote(
@@ -638,32 +654,64 @@ export async function getWatchlistQuotes(
     );
   }
 
-  // Skip Yahoo history in production — CORS blocks it and it only powers sparklines.
-  const [quoteResults, historyResults] = await Promise.all([
-    Promise.allSettled(loadable.map((item) => getQuote(item, token))),
-    import.meta.env.DEV
-      ? Promise.allSettled(loadable.map((item) => getYahooHistory(item.symbol)))
-      : Promise.resolve(
-          loadable.map(
-            () =>
-              ({ status: "rejected", reason: "skip" }) as PromiseRejectedResult,
-          ),
-        ),
-  ]);
+  // Yahoo (cache) can run in parallel; Finnhub must be paced (free tier ~60/min).
+  const yahooItems = loadable.filter((item) => item.source === "yahoo");
+  const finnhubItems = loadable.filter((item) => item.source === "finnhub");
 
-  const quotes: StockQuote[] = [];
+  const yahooSettled = await Promise.allSettled(
+    yahooItems.map((item) => getQuote(item, token)),
+  );
+
+  const finnhubSettled: PromiseSettledResult<StockQuote>[] = [];
+  for (const item of finnhubItems) {
+    try {
+      finnhubSettled.push({
+        status: "fulfilled",
+        value: await getQuote(item, token),
+      });
+    } catch (reason) {
+      finnhubSettled.push({ status: "rejected", reason });
+    }
+    await sleep(FINNHUB_GAP_MS);
+  }
+
+  const historyResults = import.meta.env.DEV
+    ? await Promise.allSettled(loadable.map((item) => getYahooHistory(item.symbol)))
+    : loadable.map(
+        () =>
+          ({ status: "rejected", reason: "skip" }) as PromiseRejectedResult,
+      );
+
+  const bySymbol = new Map<string, StockQuote>();
   const failures: string[] = [];
 
-  for (let i = 0; i < quoteResults.length; i++) {
-    const result = quoteResults[i];
-    const item = loadable[i];
-    if (result?.status === "fulfilled") {
-      const hist = historyResults[i];
-      const history = hist?.status === "fulfilled" ? hist.value : undefined;
-      quotes.push({ ...result.value, history });
-    } else if (item) {
-      failures.push(item.label);
+  const merge = (
+    items: readonly WatchItem[],
+    settled: PromiseSettledResult<StockQuote>[],
+  ) => {
+    for (let i = 0; i < settled.length; i++) {
+      const result = settled[i];
+      const item = items[i];
+      if (!item) continue;
+      if (result?.status === "fulfilled") {
+        bySymbol.set(item.symbol, result.value);
+      } else {
+        failures.push(item.label);
+      }
     }
+  };
+  merge(yahooItems, yahooSettled);
+  merge(finnhubItems, finnhubSettled);
+
+  const quotes: StockQuote[] = [];
+  for (let i = 0; i < loadable.length; i++) {
+    const item = loadable[i];
+    if (!item) continue;
+    const quote = bySymbol.get(item.symbol);
+    if (!quote) continue;
+    const hist = historyResults[i];
+    const history = hist?.status === "fulfilled" ? hist.value : undefined;
+    quotes.push({ ...quote, history });
   }
 
   if (quotes.length === 0) {

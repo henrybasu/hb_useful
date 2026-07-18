@@ -43,7 +43,7 @@ root.innerHTML = `
         </li>
         <li>
           <a href="https://gnews.io/" target="_blank" rel="noopener noreferrer">GNews</a>
-          — top headlines
+          — compiles headlines from other news sites
         </li>
       </ul>
     </section>

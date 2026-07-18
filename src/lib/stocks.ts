@@ -384,9 +384,11 @@ type YahooChartsFile = {
 };
 
 const HISTORY_TTL_MS = 60 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 8_000;
 const historyCache = new Map<string, { at: number; closes: number[] }>();
 const seriesCache = new Map<string, { at: number; series: ChartSeries }>();
 let cachedYahooCharts: YahooChartsFile | null | undefined;
+let cachedIndexFile: IndexQuotesFile | null | undefined;
 
 export function getFinnhubKey(): string | undefined {
   const key = import.meta.env.VITE_FINNHUB_KEY;
@@ -402,6 +404,35 @@ export function findWatchItemBySymbol(symbol: string): WatchItem | undefined {
   return WATCHLIST.find((w) => w.symbol === symbol);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(
+  input: string,
+  init?: RequestInit,
+  timeoutMs = FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Request timed out (${timeoutMs}ms)`);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function assetUrl(file: string): string {
+  return /\/stocks\/[^/]+\.html$/i.test(window.location.pathname)
+    ? `../${file}`
+    : `./${file}`;
+}
+
 function yahooChartUrl(
   symbol: string,
   range: ChartRange | "5d" | "6mo" = "5d",
@@ -414,15 +445,6 @@ function yahooChartUrl(
     return `/yahoo-api${path}`;
   }
   return `https://query1.finance.yahoo.com${path}`;
-}
-
-function closesFromYahooResult(result: YahooChartResult | undefined): number[] {
-  const adj = result?.indicators?.adjclose?.[0]?.adjclose;
-  const raw = result?.indicators?.quote?.[0]?.close;
-  const series = adj ?? raw ?? [];
-  return series.filter(
-    (n): n is number => typeof n === "number" && Number.isFinite(n),
-  );
 }
 
 function pointsFromYahooResult(
@@ -474,7 +496,7 @@ function quoteFromYahooMeta(
 }
 
 async function getYahooQuoteLive(item: WatchItem): Promise<StockQuote> {
-  const res = await fetch(yahooChartUrl(item.symbol, "5d", "1d"));
+  const res = await fetchWithTimeout(yahooChartUrl(item.symbol, "5d", "1d"));
   if (!res.ok) {
     throw new Error(`Yahoo quote failed for ${item.label} (${res.status})`);
   }
@@ -486,15 +508,10 @@ async function getYahooQuoteLive(item: WatchItem): Promise<StockQuote> {
   return quoteFromYahooMeta(item, meta);
 }
 
-let cachedIndexFile: IndexQuotesFile | null | undefined;
-
 async function getYahooQuoteCached(item: WatchItem): Promise<StockQuote> {
   if (cachedIndexFile === undefined) {
     try {
-      const quotesPath = /\/stocks\/[^/]+\.html$/i.test(window.location.pathname)
-        ? "../index-quotes.json"
-        : "./index-quotes.json";
-      const res = await fetch(quotesPath);
+      const res = await fetchWithTimeout(assetUrl("index-quotes.json"), undefined, 5_000);
       cachedIndexFile = res.ok ? ((await res.json()) as IndexQuotesFile) : null;
     } catch {
       cachedIndexFile = null;
@@ -523,28 +540,18 @@ export async function getYahooQuote(item: WatchItem): Promise<StockQuote> {
   }
 }
 
-async function fetchYahooHistory(symbol: string): Promise<number[]> {
-  const res = await fetch(yahooChartUrl(symbol, "6mo", "1d"));
-  if (!res.ok) {
-    throw new Error(`Yahoo history failed for ${symbol} (${res.status})`);
-  }
-  const data = (await res.json()) as YahooChartResponse;
-  if (data.chart?.error?.description) {
-    throw new Error(data.chart.error.description);
-  }
-  const closes = closesFromYahooResult(data.chart?.result?.[0]);
-  if (closes.length < 2) {
-    throw new Error(`Not enough history for ${symbol}`);
-  }
-  return closes;
-}
-
 export async function getYahooHistory(symbol: string): Promise<number[]> {
   const cached = historyCache.get(symbol);
   if (cached && Date.now() - cached.at < HISTORY_TTL_MS) {
     return cached.closes;
   }
-  const closes = await fetchYahooHistory(symbol);
+
+  // Board sparklines use the build-time snapshot only (never block on live Yahoo).
+  const series = await getYahooChartCached(symbol, "6mo");
+  const closes = series.points.map((p) => p.price);
+  if (closes.length < 2) {
+    throw new Error(`Not enough history for ${symbol}`);
+  }
   historyCache.set(symbol, { at: Date.now(), closes });
   return closes;
 }
@@ -554,7 +561,7 @@ async function getYahooChartLive(
   range: ChartRange,
 ): Promise<ChartSeries> {
   const interval = RANGE_INTERVAL[range];
-  const res = await fetch(yahooChartUrl(symbol, range, interval));
+  const res = await fetchWithTimeout(yahooChartUrl(symbol, range, interval));
   if (!res.ok) {
     throw new Error(`Chart failed for ${symbol} (${res.status})`);
   }
@@ -576,10 +583,7 @@ async function getYahooChartLive(
 async function loadYahooChartsFile(): Promise<YahooChartsFile | null> {
   if (cachedYahooCharts !== undefined) return cachedYahooCharts;
   try {
-    const chartsPath = /\/stocks\/[^/]+\.html$/i.test(window.location.pathname)
-      ? "../yahoo-charts.json"
-      : "./yahoo-charts.json";
-    const res = await fetch(chartsPath);
+    const res = await fetchWithTimeout(assetUrl("yahoo-charts.json"), undefined, 5_000);
     cachedYahooCharts = res.ok
       ? ((await res.json()) as YahooChartsFile)
       : null;
@@ -641,7 +645,7 @@ async function getFinnhubChartSeries(
 
   let lastStatus = 0;
   for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url.toString());
     lastStatus = res.status;
     if (res.status === 429) {
       await sleep(500 * (attempt + 1));
@@ -698,19 +702,21 @@ export async function getChartSeries(
   const token = getFinnhubKey();
   let series: ChartSeries;
 
-  if (import.meta.env.DEV) {
-    // Local Vite proxies Yahoo and avoids CORS.
-    series = await getYahooChartLive(symbol, range);
-  } else if (token && item?.source === "finnhub") {
-    try {
-      series = await getFinnhubChartSeries(symbol, range, token);
-    } catch {
-      // Fall back to the daily Yahoo snapshot when Finnhub candles are unavailable.
-      series = await getYahooChartCached(symbol, range);
-    }
-  } else {
-    // Production browsers cannot call Yahoo (CORS) — use the build snapshot.
+  // Always prefer the build snapshot when present (fast, no CORS).
+  try {
     series = await getYahooChartCached(symbol, range);
+  } catch {
+    if (import.meta.env.DEV) {
+      series = await getYahooChartLive(symbol, range);
+    } else if (token && item?.source === "finnhub") {
+      try {
+        series = await getFinnhubChartSeries(symbol, range, token);
+      } catch {
+        throw new Error(`No chart data for ${symbol} (${range})`);
+      }
+    } else {
+      throw new Error(`No cached chart for ${symbol} (${range})`);
+    }
   }
 
   seriesCache.set(cacheKey, { at: Date.now(), series });
@@ -718,10 +724,6 @@ export async function getChartSeries(
 }
 
 const FINNHUB_GAP_MS = 120;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export async function getFinnhubQuote(
   item: WatchItem,
@@ -736,8 +738,8 @@ export async function getFinnhubQuote(
   url.searchParams.set("token", token);
 
   let lastStatus = 0;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(url);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetchWithTimeout(url.toString(), undefined, 5_000);
     lastStatus = res.status;
     if (res.status === 429) {
       await sleep(500 * (attempt + 1));
@@ -817,23 +819,16 @@ export async function getWatchlistQuotes(
     await sleep(FINNHUB_GAP_MS);
   }
 
-  const historyResults = import.meta.env.DEV
-    ? await Promise.allSettled(loadable.map((item) => getYahooHistory(item.symbol)))
-    : loadable.map(
-        () =>
-          ({ status: "rejected", reason: "skip" }) as PromiseRejectedResult,
-      );
-
   const bySymbol = new Map<string, StockQuote>();
   const failures: string[] = [];
 
   const merge = (
-    items: readonly WatchItem[],
+    group: readonly WatchItem[],
     settled: PromiseSettledResult<StockQuote>[],
   ) => {
     for (let i = 0; i < settled.length; i++) {
       const result = settled[i];
-      const item = items[i];
+      const item = group[i];
       if (!item) continue;
       if (result?.status === "fulfilled") {
         bySymbol.set(item.symbol, result.value);
@@ -844,6 +839,12 @@ export async function getWatchlistQuotes(
   };
   merge(yahooItems, yahooSettled);
   merge(finnhubItems, finnhubSettled);
+
+  // Sparklines: prefer local yahoo-charts.json; never block the board on live Yahoo.
+  await loadYahooChartsFile();
+  const historyResults = await Promise.allSettled(
+    loadable.map((item) => getYahooHistory(item.symbol)),
+  );
 
   const quotes: StockQuote[] = [];
   for (let i = 0; i < loadable.length; i++) {

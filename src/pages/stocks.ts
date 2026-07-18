@@ -20,6 +20,8 @@ if (!root) throw new Error("#app missing");
 const app = root;
 
 const REFRESH_MS = 60_000;
+let hasQuotes = false;
+let loading = false;
 
 function changeClass(n: number): string {
   if (n > 0) return "up";
@@ -59,7 +61,7 @@ function renderQuotes(quotes: StockQuote[], updatedAt: string): void {
   const tape = quotes
     .map(
       (q) =>
-        `${q.label} ${formatPrice(q.price)} ${formatPercent(q.percentChange)}`,
+        `${q.label} ${formatPrice(q.price, currencyForSymbol(q.symbol))} ${formatPercent(q.percentChange)}`,
     )
     .join("   ★   ");
 
@@ -102,7 +104,7 @@ function renderError(message: string): void {
     </main>`;
 }
 
-async function load(): Promise<void> {
+function renderLoading(): void {
   app.innerHTML = `
     ${renderSiteNav("stocks")}
     <main class="stocks-page">
@@ -110,12 +112,36 @@ async function load(): Promise<void> {
       <h1 class="page-title">Market board</h1>
       <p class="quote-meta-line">Fetching quotes…</p>
     </main>`;
+}
+
+async function load(): Promise<void> {
+  if (loading) return;
+  loading = true;
+
+  if (!hasQuotes) {
+    renderLoading();
+  } else {
+    const meta = app.querySelector(".quote-meta-line");
+    if (meta) meta.textContent = "Updating quotes…";
+  }
 
   try {
     const quotes = await getWatchlistQuotes();
+    hasQuotes = true;
     renderQuotes(quotes, new Date().toLocaleTimeString());
   } catch (err) {
-    renderError(err instanceof Error ? err.message : "Quote feed unavailable");
+    if (!hasQuotes) {
+      renderError(err instanceof Error ? err.message : "Quote feed unavailable");
+    } else {
+      const meta = app.querySelector(".quote-meta-line");
+      if (meta) {
+        meta.textContent =
+          err instanceof Error ? err.message : "Quote refresh failed";
+        meta.classList.add("error");
+      }
+    }
+  } finally {
+    loading = false;
   }
 }
 

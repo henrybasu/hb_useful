@@ -378,9 +378,15 @@ type IndexQuotesFile = {
   quotes?: StockQuote[];
 };
 
+type YahooChartsFile = {
+  fetchedAt?: string;
+  series?: Record<string, ChartSeries>;
+};
+
 const HISTORY_TTL_MS = 60 * 60 * 1000;
 const historyCache = new Map<string, { at: number; closes: number[] }>();
 const seriesCache = new Map<string, { at: number; series: ChartSeries }>();
+let cachedYahooCharts: YahooChartsFile | null | undefined;
 
 export function getFinnhubKey(): string | undefined {
   const key = import.meta.env.VITE_FINNHUB_KEY;
@@ -543,16 +549,10 @@ export async function getYahooHistory(symbol: string): Promise<number[]> {
   return closes;
 }
 
-export async function getChartSeries(
+async function getYahooChartLive(
   symbol: string,
   range: ChartRange,
 ): Promise<ChartSeries> {
-  const cacheKey = `${symbol}|${range}`;
-  const cached = seriesCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < HISTORY_TTL_MS) {
-    return cached.series;
-  }
-
   const interval = RANGE_INTERVAL[range];
   const res = await fetch(yahooChartUrl(symbol, range, interval));
   if (!res.ok) {
@@ -567,10 +567,152 @@ export async function getChartSeries(
   if (points.length < 2) {
     throw new Error(`Not enough chart data for ${symbol}`);
   }
-  const series: ChartSeries = {
+  return {
     points,
     currency: result?.meta?.currency ?? "USD",
   };
+}
+
+async function loadYahooChartsFile(): Promise<YahooChartsFile | null> {
+  if (cachedYahooCharts !== undefined) return cachedYahooCharts;
+  try {
+    const chartsPath = /\/stocks\/[^/]+\.html$/i.test(window.location.pathname)
+      ? "../yahoo-charts.json"
+      : "./yahoo-charts.json";
+    const res = await fetch(chartsPath);
+    cachedYahooCharts = res.ok
+      ? ((await res.json()) as YahooChartsFile)
+      : null;
+  } catch {
+    cachedYahooCharts = null;
+  }
+  return cachedYahooCharts;
+}
+
+async function getYahooChartCached(
+  symbol: string,
+  range: ChartRange,
+): Promise<ChartSeries> {
+  const file = await loadYahooChartsFile();
+  const hit = file?.series?.[`${symbol}|${range}`];
+  if (!hit || hit.points.length < 2) {
+    throw new Error(`No cached chart for ${symbol} (${range})`);
+  }
+  return hit;
+}
+
+const FINNHUB_RANGE: Record<
+  ChartRange,
+  { resolution: string; lookbackDays: number }
+> = {
+  "1d": { resolution: "5", lookbackDays: 1 },
+  "5d": { resolution: "15", lookbackDays: 5 },
+  "1mo": { resolution: "D", lookbackDays: 31 },
+  "3mo": { resolution: "D", lookbackDays: 93 },
+  "6mo": { resolution: "D", lookbackDays: 186 },
+  "1y": { resolution: "D", lookbackDays: 370 },
+  "5y": { resolution: "W", lookbackDays: 365 * 5 + 14 },
+  "10y": { resolution: "W", lookbackDays: 365 * 10 + 14 },
+  max: { resolution: "M", lookbackDays: 365 * 30 },
+};
+
+type FinnhubCandleResponse = {
+  s?: string;
+  t?: number[];
+  c?: number[];
+  error?: string;
+};
+
+async function getFinnhubChartSeries(
+  symbol: string,
+  range: ChartRange,
+  token: string,
+): Promise<ChartSeries> {
+  const { resolution, lookbackDays } = FINNHUB_RANGE[range];
+  const to = Math.floor(Date.now() / 1000);
+  const from = to - lookbackDays * 24 * 60 * 60;
+
+  const url = new URL("https://finnhub.io/api/v1/stock/candle");
+  url.searchParams.set("symbol", symbol);
+  url.searchParams.set("resolution", resolution);
+  url.searchParams.set("from", String(from));
+  url.searchParams.set("to", String(to));
+  url.searchParams.set("token", token);
+
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(url);
+    lastStatus = res.status;
+    if (res.status === 429) {
+      await sleep(500 * (attempt + 1));
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`Chart failed for ${symbol} (${res.status})`);
+    }
+
+    const data = (await res.json()) as FinnhubCandleResponse;
+    if (data.error) {
+      throw new Error(`${symbol}: ${data.error}`);
+    }
+    if (data.s === "no_data" || !data.t?.length || !data.c?.length) {
+      throw new Error(`Not enough chart data for ${symbol}`);
+    }
+
+    const points: ChartPoint[] = [];
+    const len = Math.min(data.t.length, data.c.length);
+    for (let i = 0; i < len; i++) {
+      const t = data.t[i];
+      const price = data.c[i];
+      if (
+        typeof t === "number" &&
+        typeof price === "number" &&
+        Number.isFinite(price)
+      ) {
+        points.push({ t, price });
+      }
+    }
+    if (points.length < 2) {
+      throw new Error(`Not enough chart data for ${symbol}`);
+    }
+    return {
+      points,
+      currency: currencyForSymbol(symbol),
+    };
+  }
+
+  throw new Error(`Chart failed for ${symbol} (${lastStatus || 429})`);
+}
+
+export async function getChartSeries(
+  symbol: string,
+  range: ChartRange,
+): Promise<ChartSeries> {
+  const cacheKey = `${symbol}|${range}`;
+  const cached = seriesCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < HISTORY_TTL_MS) {
+    return cached.series;
+  }
+
+  const item = findWatchItemBySymbol(symbol);
+  const token = getFinnhubKey();
+  let series: ChartSeries;
+
+  if (import.meta.env.DEV) {
+    // Local Vite proxies Yahoo and avoids CORS.
+    series = await getYahooChartLive(symbol, range);
+  } else if (token && item?.source === "finnhub") {
+    try {
+      series = await getFinnhubChartSeries(symbol, range, token);
+    } catch {
+      // Fall back to the daily Yahoo snapshot when Finnhub candles are unavailable.
+      series = await getYahooChartCached(symbol, range);
+    }
+  } else {
+    // Production browsers cannot call Yahoo (CORS) — use the build snapshot.
+    series = await getYahooChartCached(symbol, range);
+  }
+
   seriesCache.set(cacheKey, { at: Date.now(), series });
   return series;
 }

@@ -265,7 +265,7 @@ function shell(
           <div class="range-toggle" role="group" aria-label="Chart time frame">${rangeButtons(range)}</div>
         </div>
         ${chartBody}
-        <p class="detail-chart-note">Hover or drag to see price at a point in time. Chart data via <a class="source-link" href="${yahooQuoteUrl}" target="_blank" rel="noopener noreferrer">Yahoo Finance</a>.</p>
+        <p class="detail-chart-note">Hover or drag to see price at a point in time. Charts via <a class="source-link" href="https://finnhub.io/" target="_blank" rel="noopener noreferrer">Finnhub</a> or a <a class="source-link" href="${yahooQuoteUrl}" target="_blank" rel="noopener noreferrer">Yahoo Finance</a> build snapshot.</p>
       </section>
     </main>`;
 }

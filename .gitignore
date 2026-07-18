@@ -3,3 +3,4 @@ dist/
 .env
 .DS_Store
 public/index-quotes.json
+public/yahoo-charts.json
